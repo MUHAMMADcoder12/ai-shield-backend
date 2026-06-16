@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import requests
+import google.generativeai as genai
 
 app = FastAPI()
 
@@ -14,8 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = 'AQ.Ab8RN6I0Y1AxqwoyiCH5Xm9y5bKaYY_j9LQS1AAa7GWZYB1qnQ'
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={API_KEY}"
+# ⚠️ MUHIM: Bu yerga AI Studio'dan olingan haqiqiy AIzaSy bilan boshlanadigan kalitni qo'ying!
+API_KEY = "AQ.Ab8RN6INL0r-7d-7ehRlEboFGcBhbjQg-4X5K3YBX6tJNHJSbQ"
+genai.configure(api_key=API_KEY)
 
 class SaytMaoruz(BaseModel):
     matn: str
@@ -29,15 +30,25 @@ tizim_yoʻriqnomasi = (
 @app.post("/tahlil")
 async def tahlil_qil(sayt: SaytMaoruz):
     try:
-        # Google serveriga to'g'ridan-to'g'ri so'rov yuboramiz
-        payload = {
-            "contents": [{"parts": [{"text": sayt.matn}]}],
-            "systemInstruction": {"parts": [{"text": tizim_yoʻriqnomasi}]},
-            "generationConfig": {"temperature": 0.1}
-        }
-        res = requests.post(GEMINI_URL, json=payload)
-        data = res.json()
-        natija = data['candidates'][0]['content']['parts'][0]['text'].strip()
-        return {"status": natija}
+        # Gemini modelini tizim yo'riqnomasi bilan birga sozlaymiz
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash",
+            system_instruction=tizim_yoʻriqnomasi
+        )
+        
+        # Sayt matnini sun'iy intellektga yuboramiz
+        response = model.generate_content(sayt.matn)
+        
+        # Kelgan javobni tozalab olamiz
+        natija = response.text.strip()
+        
+        # Agar javob ichida XAVFLI degan so'z bo'lsa, plaginga 'fishing' deb qaytaramiz
+        if "XAVFLI" in natija:
+            return {"status": "fishing"}
+        else:
+            return {"status": "xavfsiz"}
+            
     except Exception as e:
+        # Konsolda xatoni aniq ko'rish uchun:
+        print(f"Xatolik yuz berdi: {str(e)}")
         return {"status": "XATO", "error": str(e)}
