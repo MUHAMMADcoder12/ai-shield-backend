@@ -1,11 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import google.generativeai as genai
+import requests
 
 app = FastAPI()
 
-# Brauzer bloklab qo'ymasligi uchun CORS sozlamasi
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,9 +13,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ⚠️ MUHIM: Bu yerga AI Studio'dan olingan haqiqiy AIzaSy bilan boshlanadigan kalitni qo'ying!
-API_KEY = "AQ.Ab8RN6INL0r-7d-7ehRlEboFGcBhbjQg-4X5K3YBX6tJNHJSbQ"
-genai.configure(api_key=API_KEY)
+# 🚀 Bu tekin va ochiq kalit, profil to'ldirish shart emas!
+HF_API_KEY = "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"
+URL = "https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3-8B-Instruct"
 
 class SaytMaoruz(BaseModel):
     matn: str
@@ -24,31 +23,28 @@ class SaytMaoruz(BaseModel):
 tizim_yoʻriqnomasi = (
     "Siz kiberxavfsizlik mutaxassissiz. Agar matnda plastik karta o'g'irlash, "
     "soxta yutuq yoki SMS kod so'rash bo'lsa 'XAVFLI', aks holda 'XAVFSIZ' deb javob bering. "
-    "Ortiqcha so'z yozmang, faqat shu ikki so'zdan birini qaytaring."
+    "Faqat shu ikki so'zdan birini qaytaring, ortiqcha tushuntirish yozmang."
 )
 
 @app.post("/tahlil")
 async def tahlil_qil(sayt: SaytMaoruz):
     try:
-        # Gemini modelini tizim yo'riqnomasi bilan birga sozlaymiz
-        model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
-            system_instruction=tizim_yoʻriqnomasi
-        )
+        headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+        payload = {
+            "inputs": f"<|system|>\n{tizim_yoʻriqnomasi}\n<|user|>\n{sayt.matn}\n<|assistant|>\n",
+            "parameters": {"max_new_tokens": 10, "temperature": 0.1}
+        }
         
-        # Sayt matnini sun'iy intellektga yuboramiz
-        response = model.generate_content(sayt.matn)
+        res = requests.post(URL, json=payload, headers=headers)
+        data = res.json()
         
-        # Kelgan javobni tozalab olamiz
-        natija = response.text.strip()
+        # Kelgan javob matnini tekshiramiz
+        javob = data[0]['generated_text'].split("<|assistant|>\n")[-1].strip()
         
-        # Agar javob ichida XAVFLI degan so'z bo'lsa, plaginga 'fishing' deb qaytaramiz
-        if "XAVFLI" in natija:
+        if "XAVFLI" in javob.upper():
             return {"status": "fishing"}
         else:
             return {"status": "xavfsiz"}
             
     except Exception as e:
-        # Konsolda xatoni aniq ko'rish uchun:
-        print(f"Xatolik yuz berdi: {str(e)}")
         return {"status": "XATO", "error": str(e)}
