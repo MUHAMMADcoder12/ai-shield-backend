@@ -1,7 +1,8 @@
+import os
+import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import requests
 
 app = FastAPI()
 
@@ -13,48 +14,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Kalitsiz va tekin ishlaydigan ochiq AI API manzili
-URL = "https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3-8B-Instruct"
-
 class SaytMaoruz(BaseModel):
     matn: str
 
-tizim_yoʻriqnomasi = (
-    "Siz anti-phishing tizimisiz. Matnni tekshiring. Agar unda plastik karta o'g'irlash, "
-    "soxta yutuq, login-parol yoki SMS kod so'rash bo'lsa faqat 'XAVFLI' deb javob bering. "
-    "Aks holda 'XAVFSIZ' deb javob bering. Faqat shu birgina so'zning o'zini qaytaring."
-)
+# Hugging Face va Llama-3 sozlamalari
+API_URL = "https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3-8B-Instruct"
+# O'zingizning Hugging Face Tokeningizni kiriting (agar o'zgargan bo'lsa)
+HF_TOKEN = "hf_Sizning Tokeningiz Shu Yerda Bo'lsin" 
+HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 @app.post("/tahlil")
 async def tahlil_qil(sayt: SaytMaoruz):
-    try:
-        # Hech qanday Bearer Token yoki API Key-siz to'g'ridan-to'g'ri so'rov yuboramiz
-        payload = {
-            "inputs": f"<|system|>\n{tizim_yoʻriqnomasi}\n<|user|>\n{sayt.matn}\n<|assistant|>\n",
-            "parameters": {"max_new_tokens": 5, "temperature": 0.1}
-        }
-        
-        res = requests.post(URL, json=payload)
-        data = res.json()
-        
-        # Ochiq API ba'zan ro'yxat qaytaradi, tekshiramiz
-        if isinstance(data, list) and len(data) > 0:
-            javob = data[0].get('generated_text', '').split("<|assistant|>\n")[-1].strip().upper()
-        else:
-            javob = str(data).upper()
-        
-        if "XAVFLI" in javob:
-            return {"status": "fishing"}
-        else:
-            # Agar sun'iy intellekt yuklamasi band bo'lsa, zaxira filtri ishlaydi
-            matn_lower = sayt.matn.lower()
-            if any(soz in matn_lower for soz in ["karta", "kod", "sms", "yutuq"]):
+    matn_lower = sayt.matn.lower()
+    
+    # ========================================================
+    # 🛡️ 1-bosqich: BARCHA TURDAGI FISHING SO'ZLARI RO'YXATI (Zaxira)
+    # ========================================================
+    fishing_belgilari = [
+        # Plastik karta o'g'rilari
+        "plastik karta", "karta paroli", "sms kodni kiriting", "cvv", "kodni kiriting",
+        # Telegram va ijtimoiy tarmoq o'g'rilari
+        "telegramga kirish", "ovoz bering", "tg bot", "tasdiqlash kodi", "shaxsiy kabinet",
+        # Soxta yutuq va investitsiyalar
+        "yutuqni oling", "bepul megabayt", "pul mukofoti", "aksiyada qatnashish", "fondi taqdirlash",
+        # Chet el xavfli so'zlari
+        "card number", "card holder", "expiry date", "verify your account", "login to continue"
+    ]
+    
+    # Agar matnda ushbu shubhali so'zlardan biri VA so'rov/forma elementlari qatnashsa:
+    for belgi in fishing_belgilari:
+        if belgi in matn_lower:
+            # Oddiy yangilik saytlarini noto'g'ri bloklab qo'ymaslik uchun qo'shimcha filtr
+            if "kiriting" in matn_lower or "oling" in matn_lower or "parol" in matn_lower or "login" in matn_lower:
                 return {"status": "fishing"}
-            return {"status": "xavfsiz"}
-            
+
+    # ========================================================
+    # 🧠 2-bosqich: SUN'IY INTELLEKT (LLAMA-3) TAHLILI
+    # ========================================================
+    prompt = f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n" \
+             f"Siz kiberxavfsizlik bo'yicha ekspertsiz. Berilgan matn fishing (firgarlik, ma'lumot o'g'irlash, soxta aksiya, soxta login) sayti ekanligini aniqlang. " \
+             f"Faqat bitta so'z javob bering: agar fishing bo'lsa 'fishing', xavfsiz bo'lsa 'xavfsiz' deb yozing.<|eot_id|>" \
+             f"<|start_header_id|>user<|end_header_id|>\n" \
+             f"Matn:\n{sayt.matn[:1000]}\n<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n"
+
+    try:
+        response = requests.post(API_URL, headers=HEADERS, json={"inputs": prompt, "parameters": {"max_new_tokens": 10}}, timeout=5)
+        if response.status_code == 200:
+            ai_javob = response.json()[0]['generated_text'].split("<|start_header_id|>assistant<|end_header_id|>\n")[-1].strip().lower()
+            if "fishing" in ai_javob:
+                return {"status": "fishing"}
     except Exception as e:
-        # Tarmoqda xato bo'lsa ham foydalanuvchini himoya qilish uchun zaxira filtri
-        matn_lower = sayt.matn.lower()
-        if any(soz in matn_lower for soz in ["karta", "kod", "sms", "yutuq"]):
-            return {"status": "fishing"}
-        return {"status": "xavfsiz"}
+        print("AI tizimida xatolik, zaxira filtri ishladi:", e)
+
+    # Agar hech qaysi filtrda shubha topilmasa
+    return {"status": "xavfsiz"}
