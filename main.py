@@ -13,47 +13,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔑 MANA SHU YERGA BOYAGI OLGAN HAQIQIY GEMINI KALITINGIZNI QO'YING!
-GEMINI_API_KEY = "AQ.Ab8RN6J5jKIQGCVdLwtuGtDtA5__SB-y4K2X2TAK5Dq3mc1ukg"
-
-# Gemini API'ning rasmiy manzili
-URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+# Kalitsiz va tekin ishlaydigan ochiq AI API manzili
+URL = "https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3-8B-Instruct"
 
 class SaytMaoruz(BaseModel):
     matn: str
 
 tizim_yoʻriqnomasi = (
-    "Siz kiberxavfsizlik sohasida anti-phishing mutaxassisiz. "
-    "Sizga kelgan matnni tahlil qiling. Agar matnda shaxsiy ma'lumotlarni, "
-    "plastik karta raqamlarini o'g'irlash, shubhali tekin yutuqlar yoki SMS kod so'rash kabi "
-    "fishing (aldov) alomatlari bo'lsa faqat 'XAVFLI' so'zini qaytaring. "
-    "Agar oddiy, xavfsiz sayt bo'lsa 'XAVFSIZ' so'zini qaytaring. "
-    "Hech qanday ortiqcha tushuntirish yoki gap yozmang, faqat shu ikki so'zdan birini qaytaring."
+    "Siz anti-phishing tizimisiz. Matnni tekshiring. Agar unda plastik karta o'g'irlash, "
+    "soxta yutuq, login-parol yoki SMS kod so'rash bo'lsa faqat 'XAVFLI' deb javob bering. "
+    "Aks holda 'XAVFSIZ' deb javob bering. Faqat shu birgina so'zning o'zini qaytaring."
 )
 
 @app.post("/tahlil")
 async def tahlil_qil(sayt: SaytMaoruz):
     try:
-        # Gemini API uchun so'rov paketi (Payload)
+        # Hech qanday Bearer Token yoki API Key-siz to'g'ridan-to'g'ri so'rov yuboramiz
         payload = {
-            "contents": [{
-                "parts": [{
-                    "text": f"{tizim_yoʻriqnomasi}\n\nTahlil qilinadigan matn:\n{sayt.matn}"
-                }]
-            }]
+            "inputs": f"<|system|>\n{tizim_yoʻriqnomasi}\n<|user|>\n{sayt.matn}\n<|assistant|>\n",
+            "parameters": {"max_new_tokens": 5, "temperature": 0.1}
         }
         
-        res = requests.post(URL, json=payload, headers={"Content-Type": "application/json"})
+        res = requests.post(URL, json=payload)
         data = res.json()
         
-        # Geminidan kelgan javob matnini tozalab olamiz
-        gemini_javobi = data['candidates'][0]['content']['parts'][0]['text'].strip().upper()
+        # Ochiq API ba'zan ro'yxat qaytaradi, tekshiramiz
+        if isinstance(data, list) and len(data) > 0:
+            javob = data[0].get('generated_text', '').split("<|assistant|>\n")[-1].strip().upper()
+        else:
+            javob = str(data).upper()
         
-        # Agar javob ichida XAVFLI so'zi bo'lsa, plaginga signal beramiz
-        if "XAVFLI" in gemini_javobi:
+        if "XAVFLI" in javob:
             return {"status": "fishing"}
         else:
+            # Agar sun'iy intellekt yuklamasi band bo'lsa, zaxira filtri ishlaydi
+            matn_lower = sayt.matn.lower()
+            if any(soz in matn_lower for soz in ["karta", "kod", "sms", "yutuq"]):
+                return {"status": "fishing"}
             return {"status": "xavfsiz"}
             
     except Exception as e:
-        return {"status": "XATO", "error": str(e)}
+        # Tarmoqda xato bo'lsa ham foydalanuvchini himoya qilish uchun zaxira filtri
+        matn_lower = sayt.matn.lower()
+        if any(soz in matn_lower for soz in ["karta", "kod", "sms", "yutuq"]):
+            return {"status": "fishing"}
+        return {"status": "xavfsiz"}
